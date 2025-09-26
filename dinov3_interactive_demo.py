@@ -142,8 +142,24 @@ class DINOv3FeatureDemo:
                 print(f"Debug: Input tensor shape: {image_tensor.shape}")
                 features = self.model.forward_features(image_tensor)
                 
-                print(f"Debug: Raw features shape: {features.shape}")
                 print(f"Debug: Raw features type: {type(features)}")
+                
+                if isinstance(features, dict):
+                    print(f"Debug: Features is dictionary with keys: {list(features.keys())}")
+                    if 'x_norm_patchtokens' in features:
+                        features = features['x_norm_patchtokens']
+                        print(f"Debug: Using 'x_norm_patchtokens', shape: {features.shape}")
+                    elif 'x_prenorm' in features:
+                        features = features['x_prenorm']
+                        print(f"Debug: Using 'x_prenorm', shape: {features.shape}")
+                    elif len(features) > 0:
+                        key = list(features.keys())[0]
+                        features = features[key]
+                        print(f"Debug: Using first key '{key}', shape: {features.shape}")
+                    else:
+                        raise ValueError("Dictionary output contains no usable tensors")
+                
+                print(f"Debug: Raw features shape: {features.shape}")
                 
                 if len(features.shape) == 3 and features.shape[1] > 1:
                     patch_features = features[:, 1:]
@@ -182,6 +198,27 @@ class DINOv3FeatureDemo:
                     if isinstance(features, tuple):
                         features = features[0]
                         print(f"Debug: Extracted from tuple, shape: {features.shape}")
+                    
+                    if isinstance(features, dict):
+                        print(f"Debug: Alternative features is dictionary with keys: {list(features.keys())}")
+                        if 'x_norm_patchtokens' in features:
+                            features = features['x_norm_patchtokens']
+                        elif 'x_prenorm' in features:
+                            features = features['x_prenorm']
+                        elif len(features) > 0:
+                            key = list(features.keys())[0]
+                            features = features[key]
+                            print(f"Debug: Using first key '{key}', shape: {features.shape}")
+                        else:
+                            raise ValueError("Dictionary output contains no usable tensors")
+                    
+                    print(f"Debug: Alternative features shape: {features.shape}")
+                    
+                    if len(features.shape) == 2 and features.shape[0] == 1:
+                        print(f"Debug: Got 1D feature vector {features.shape}, creating artificial patch grid")
+                        features = features.unsqueeze(1).unsqueeze(1)  # [1, D] -> [1, 1, 1, D]
+                        print(f"Debug: Reshaped to artificial patch grid: {features.shape}")
+                        return features
                     
                     if len(features.shape) == 4:  # [B, C, H, W]
                         print("Debug: Converting [B, C, H, W] -> [B, H, W, C]")
@@ -428,19 +465,32 @@ class DINOv3FeatureDemo:
             if len(self.current_features.shape) == 4:  # [B, H, W, D]
                 _, h, w, _ = self.current_features.shape
                 print(f"Debug: 4D tensor - patch grid size: {h}x{w}")
+                
+                if h == 1 and w == 1:
+                    print("Debug: Global feature case - using single patch (0, 0)")
+                    return 0, 0
+                    
             elif len(self.current_features.shape) == 3:  # [B, N, D] - 予期しない形状
                 print(f"Warning: Unexpected 3D tensor shape: {self.current_features.shape}")
                 n_patches = self.current_features.shape[1]
+                
+                if n_patches == 1:
+                    print("Debug: Single patch case - using patch (0, 0)")
+                    return 0, 0
+                
                 h = w = int(np.sqrt(n_patches))
                 print(f"Debug: 3D tensor - calculated patch grid: {h}x{w} from {n_patches} patches")
             else:
                 raise ValueError(f"Unsupported feature tensor shape: {self.current_features.shape}")
             
-            patch_x = int(x * w / self.image_size[0])
-            patch_y = int(y * h / self.image_size[1])
-            
-            patch_x = max(0, min(patch_x, w - 1))
-            patch_y = max(0, min(patch_y, h - 1))
+            if h > 1 and w > 1:
+                patch_x = int(x * w / self.image_size[0])
+                patch_y = int(y * h / self.image_size[1])
+                
+                patch_x = max(0, min(patch_x, w - 1))
+                patch_y = max(0, min(patch_y, h - 1))
+            else:
+                patch_x = patch_y = 0
             
             print(f"Debug: patch coordinates = ({patch_x}, {patch_y}) in grid {h}x{w}")
             
