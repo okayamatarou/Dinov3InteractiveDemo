@@ -344,17 +344,21 @@ class DINOv3FeatureDemo:
                 import traceback
                 print(f"詳細: {traceback.format_exc()}")
     
-    def _display_interactive_image(self):
+    def _display_interactive_image(self, marker_coords=None):
         """インタラクティブな画像表示"""
         try:
             print("\n🖼️ インタラクティブ画像を表示中...")
             
             resized_image = self.current_image.resize(self.image_size, Image.LANCZOS)
             
-            img_bytes = io.BytesIO()
-            resized_image.save(img_bytes, format='PNG')
-            img_bytes.seek(0)
-            display(IPImage(data=img_bytes.getvalue()))
+            if marker_coords is None:
+                img_bytes = io.BytesIO()
+                resized_image.save(img_bytes, format='PNG')
+                img_bytes.seek(0)
+                display(IPImage(data=img_bytes.getvalue()))
+            else:
+                self._display_image_with_marker(resized_image, marker_coords)
+            
             print("✓ インタラクティブ画像表示成功")
             
             if IN_COLAB:
@@ -387,6 +391,38 @@ class DINOv3FeatureDemo:
             
         except Exception as e:
             print(f"❌ インタラクティブ画像表示エラー: {e}")
+            import traceback
+            print(f"詳細: {traceback.format_exc()}")
+    
+    def _display_image_with_marker(self, image, coords):
+        """座標マーカー付きで画像を表示"""
+        try:
+            fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+            ax.imshow(image)
+            
+            x, y = coords
+            ax.plot(x, y, 'r+', markersize=25, markeredgewidth=5, label='選択座標')
+            ax.plot(x, y, 'wo', markersize=10, markeredgewidth=3)
+            ax.plot(x, y, 'r+', markersize=20, markeredgewidth=3)
+            
+            ax.set_title(f'選択座標: ({x}, {y}) - 赤い十字で表示', fontsize=14, pad=15)
+            ax.axis('off')
+            plt.tight_layout()
+            
+            if IN_COLAB:
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight', dpi=150, 
+                           facecolor='white', edgecolor='none')
+                buf.seek(0)
+                plt.close(fig)
+                display(IPImage(data=buf.getvalue()))
+            else:
+                plt.show()
+                
+            print(f"📍 座標 ({x}, {y}) を赤い十字で表示しました")
+            
+        except Exception as e:
+            print(f"❌ マーカー付き画像表示エラー: {e}")
             import traceback
             print(f"詳細: {traceback.format_exc()}")
     
@@ -425,6 +461,12 @@ class DINOv3FeatureDemo:
         """座標入力での特徴量表示"""
         try:
             x, y = self.x_input.value, self.y_input.value
+            
+            print(f"\n🎯 座標 ({x}, {y}) を選択しました")
+            
+            resized_image = self.current_image.resize(self.image_size, Image.LANCZOS)
+            self._display_image_with_marker(resized_image, (x, y))
+            
             feature_vector = self._get_feature_at_pixel(x, y)
             
             if feature_vector is not None:
@@ -446,12 +488,19 @@ class DINOv3FeatureDemo:
         """座標入力での基準点設定"""
         try:
             x, y = self.x_input.value, self.y_input.value
+            
+            print(f"\n🎯 基準点を座標 ({x}, {y}) に設定します")
+            
+            resized_image = self.current_image.resize(self.image_size, Image.LANCZOS)
+            self._display_image_with_marker(resized_image, (x, y))
+            
             self.fixed_pixel = (x, y)
             self.fixed_feature = self._get_feature_at_pixel(x, y)
             
             if self.fixed_feature is not None:
-                print(f"✓ 基準点を座標 ({x}, {y}) に設定しました")
-                print("セグメンテーションボタンが有効になりました")
+                print(f"✅ 基準点を座標 ({x}, {y}) に設定しました")
+                print("🚀 セグメンテーションボタンが有効になりました")
+                print("「セグメンテーション実行」ボタンを押してください")
             else:
                 print(f"❌ 座標 ({x}, {y}) での基準点設定に失敗")
                 
