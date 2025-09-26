@@ -139,47 +139,68 @@ class DINOv3FeatureDemo:
         """DINOv3特徴量の抽出"""
         with torch.no_grad():
             try:
+                print(f"Debug: Input tensor shape: {image_tensor.shape}")
                 features = self.model.forward_features(image_tensor)
                 
-                print(f"Features shape: {features.shape}")
+                print(f"Debug: Raw features shape: {features.shape}")
+                print(f"Debug: Raw features type: {type(features)}")
                 
                 if len(features.shape) == 3 and features.shape[1] > 1:
                     patch_features = features[:, 1:]
+                    print(f"Debug: Removed CLS token, patch_features shape: {patch_features.shape}")
                 else:
                     patch_features = features
-                
-                print(f"Patch features shape: {patch_features.shape}")
+                    print(f"Debug: No CLS token removal, patch_features shape: {patch_features.shape}")
                 
                 n_patches = patch_features.shape[1]
                 n_patches_side = int(np.sqrt(n_patches))
                 
+                print(f"Debug: n_patches={n_patches}, n_patches_side={n_patches_side}")
+                
                 if n_patches_side * n_patches_side != n_patches:
                     print(f"Warning: Non-square patch grid detected. n_patches={n_patches}")
                     n_patches_side = int(np.sqrt(n_patches))
-                    patch_features = patch_features[:, :n_patches_side*n_patches_side, :]
+                    actual_patches = n_patches_side * n_patches_side
+                    patch_features = patch_features[:, :actual_patches, :]
+                    print(f"Debug: Adjusted to {actual_patches} patches ({n_patches_side}x{n_patches_side})")
                 
                 patch_features = patch_features.reshape(1, n_patches_side, n_patches_side, -1)
                 
-                print(f"Reshaped features: {patch_features.shape}")
+                print(f"Debug: Final reshaped features: {patch_features.shape}")
                 return patch_features
                 
             except Exception as e:
-                print(f"Error in feature extraction: {e}")
+                print(f"Error in primary feature extraction: {e}")
+                import traceback
+                print(f"Primary extraction traceback: {traceback.format_exc()}")
+                
                 try:
+                    print("Debug: Trying alternative feature extraction...")
                     features = self.model(image_tensor)
+                    print(f"Debug: Alternative features type: {type(features)}")
+                    
                     if isinstance(features, tuple):
                         features = features[0]
+                        print(f"Debug: Extracted from tuple, shape: {features.shape}")
                     
                     if len(features.shape) == 4:  # [B, C, H, W]
+                        print("Debug: Converting [B, C, H, W] -> [B, H, W, C]")
                         features = features.permute(0, 2, 3, 1)  # [B, H, W, C]
                     elif len(features.shape) == 3:  # [B, N, D]
+                        print("Debug: Converting [B, N, D] -> [B, H, W, D]")
                         n_patches = features.shape[1]
                         n_patches_side = int(np.sqrt(n_patches))
                         features = features.reshape(1, n_patches_side, n_patches_side, -1)
+                    else:
+                        raise ValueError(f"Unsupported feature tensor shape: {features.shape}")
                     
+                    print(f"Debug: Alternative extraction final shape: {features.shape}")
                     return features
+                    
                 except Exception as e2:
                     print(f"Alternative feature extraction also failed: {e2}")
+                    import traceback
+                    print(f"Alternative extraction traceback: {traceback.format_exc()}")
                     raise e2
     
     def _on_upload(self, change):
@@ -393,19 +414,63 @@ class DINOv3FeatureDemo:
     
     def _pixel_to_patch(self, x: int, y: int) -> Tuple[int, int]:
         """ピクセル座標をパッチ座標に変換"""
-        patch_x = int(x * self.current_features.shape[2] / self.image_size[0])
-        patch_y = int(y * self.current_features.shape[1] / self.image_size[1])
-        
-        patch_x = max(0, min(patch_x, self.current_features.shape[2] - 1))
-        patch_y = max(0, min(patch_y, self.current_features.shape[1] - 1))
-        
-        return patch_x, patch_y
+        try:
+            print(f"Debug: current_features shape = {self.current_features.shape}")
+            print(f"Debug: image_size = {self.image_size}")
+            print(f"Debug: input coordinates = ({x}, {y})")
+            
+            if len(self.current_features.shape) == 4:  # [B, H, W, D]
+                _, h, w, _ = self.current_features.shape
+            elif len(self.current_features.shape) == 3:  # [B, N, D] - 予期しない形状
+                print(f"Warning: Unexpected 3D tensor shape: {self.current_features.shape}")
+                n_patches = self.current_features.shape[1]
+                h = w = int(np.sqrt(n_patches))
+            else:
+                raise ValueError(f"Unsupported feature tensor shape: {self.current_features.shape}")
+            
+            patch_x = int(x * w / self.image_size[0])
+            patch_y = int(y * h / self.image_size[1])
+            
+            patch_x = max(0, min(patch_x, w - 1))
+            patch_y = max(0, min(patch_y, h - 1))
+            
+            print(f"Debug: patch coordinates = ({patch_x}, {patch_y})")
+            return patch_x, patch_y
+            
+        except Exception as e:
+            print(f"Error in _pixel_to_patch: {e}")
+            print(f"Features shape: {self.current_features.shape if self.current_features is not None else 'None'}")
+            raise e
     
     def _get_feature_at_pixel(self, x: int, y: int) -> torch.Tensor:
         """指定ピクセルの特徴量を取得"""
-        patch_x, patch_y = self._pixel_to_patch(x, y)
-        feature = self.current_features[0, patch_y, patch_x, :]
-        return feature
+        try:
+            if self.current_features is None:
+                raise ValueError("Features not extracted yet")
+                
+            patch_x, patch_y = self._pixel_to_patch(x, y)
+            
+            if len(self.current_features.shape) == 4:  # [B, H, W, D]
+                feature = self.current_features[0, patch_y, patch_x, :]
+            elif len(self.current_features.shape) == 3:  # [B, N, D]
+                n_patches_side = int(np.sqrt(self.current_features.shape[1]))
+                patch_idx = patch_y * n_patches_side + patch_x
+                if patch_idx >= self.current_features.shape[1]:
+                    patch_idx = self.current_features.shape[1] - 1
+                feature = self.current_features[0, patch_idx, :]
+            else:
+                raise ValueError(f"Unsupported feature tensor shape: {self.current_features.shape}")
+            
+            print(f"Debug: extracted feature shape = {feature.shape}")
+            return feature
+            
+        except Exception as e:
+            print(f"Error in _get_feature_at_pixel: {e}")
+            print(f"Input coordinates: ({x}, {y})")
+            print(f"Features shape: {self.current_features.shape if self.current_features is not None else 'None'}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            raise e
     
     def _on_mouse_move(self, event):
         """マウス移動時の処理"""
