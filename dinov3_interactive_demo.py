@@ -6,6 +6,7 @@ DINOv3 Interactive Feature Visualization Demo for Google Colab
 
 import torch
 import torch.nn.functional as F
+import torchvision.transforms as transforms
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -13,12 +14,22 @@ from matplotlib.widgets import Button
 import cv2
 from PIL import Image
 import ipywidgets as widgets
-from IPython.display import display, clear_output
+from IPython.display import display, clear_output, Image as IPImage
 import io
 import base64
 from typing import Optional, Tuple, List
+import timm
 import warnings
 warnings.filterwarnings('ignore')
+
+try:
+    from google.colab import files
+    import matplotlib
+    matplotlib.use('Agg')  # バックエンドを明示的に設定
+    plt.ioff()  # インタラクティブモードをオフ
+    IN_COLAB = True
+except ImportError:
+    IN_COLAB = False
 
 class DINOv3FeatureDemo:
     def __init__(self):
@@ -100,6 +111,10 @@ class DINOv3FeatureDemo:
         self.reset_button.on_click(self._on_reset_click)
         
         self.confirm_button = None
+        self.x_input = None
+        self.y_input = None
+        self.coord_button = None
+        self.fix_button = None
         
         print("UI setup complete!")
     
@@ -211,15 +226,44 @@ class DINOv3FeatureDemo:
     def _display_uploaded_image(self):
         """アップロードされた画像の表示確認"""
         try:
-            fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-            ax.imshow(self.current_image)
-            ax.set_title(f'アップロード画像確認\nサイズ: {self.current_image.size}, モード: {self.current_image.mode}')
-            ax.axis('off')
-            plt.tight_layout()
-            plt.show()
+            if IN_COLAB:
+                print("📸 アップロードされた画像:")
+                
+                img_bytes = io.BytesIO()
+                self.current_image.save(img_bytes, format='PNG')
+                img_bytes.seek(0)
+                display(IPImage(data=img_bytes.getvalue()))
+                
+                fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+                ax.imshow(self.current_image)
+                ax.set_title(f'アップロード画像確認\nサイズ: {self.current_image.size}, モード: {self.current_image.mode}')
+                ax.axis('off')
+                plt.tight_layout()
+                
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+                buf.seek(0)
+                plt.close(fig)  # メモリリークを防ぐ
+                
+                display(IPImage(data=buf.getvalue()))
+                
+            else:
+                fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+                ax.imshow(self.current_image)
+                ax.set_title(f'アップロード画像確認\nサイズ: {self.current_image.size}, モード: {self.current_image.mode}')
+                ax.axis('off')
+                plt.tight_layout()
+                plt.show()
+            
             print("✓ 画像表示完了 - 上記の画像が正しく表示されていることを確認してください")
+            
         except Exception as e:
             print(f"❌ 画像表示エラー: {e}")
+            import traceback
+            print(f"詳細: {traceback.format_exc()}")
+            
+            print(f"画像情報: サイズ={self.current_image.size}, モード={self.current_image.mode}")
+            print("画像の表示に失敗しましたが、アップロードは成功しています。")
     
     def _on_confirm_image(self, button):
         """画像確認後の特徴量抽出開始"""
@@ -254,18 +298,41 @@ class DINOv3FeatureDemo:
         try:
             print("\n🖼️ インタラクティブ画像を表示中...")
             
-            self.fig, self.ax = plt.subplots(1, 1, figsize=(10, 10))
-            
-            resized_image = self.current_image.resize(self.image_size, Image.LANCZOS)
-            self.ax.imshow(resized_image)
-            self.ax.set_title('画像上をマウスホバーで特徴量表示、クリックで固定')
-            self.ax.axis('off')
-            
-            self.fig.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
-            self.fig.canvas.mpl_connect('button_press_event', self._on_mouse_click)
-            
-            plt.tight_layout()
-            plt.show()
+            if IN_COLAB:
+                self.fig, self.ax = plt.subplots(1, 1, figsize=(10, 10))
+                
+                resized_image = self.current_image.resize(self.image_size, Image.LANCZOS)
+                self.ax.imshow(resized_image)
+                self.ax.set_title('画像上をマウスホバーで特徴量表示、クリックで固定')
+                self.ax.axis('off')
+                
+                plt.tight_layout()
+                
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+                buf.seek(0)
+                
+                display(IPImage(data=buf.getvalue()))
+                plt.close(self.fig)  # メモリリークを防ぐ
+                
+                print("⚠️ Google Colabではマウスインタラクションが制限されています")
+                print("代替方法として、座標を直接入力する機能を追加します...")
+                
+                self._setup_coordinate_input()
+                
+            else:
+                self.fig, self.ax = plt.subplots(1, 1, figsize=(10, 10))
+                
+                resized_image = self.current_image.resize(self.image_size, Image.LANCZOS)
+                self.ax.imshow(resized_image)
+                self.ax.set_title('画像上をマウスホバーで特徴量表示、クリックで固定')
+                self.ax.axis('off')
+                
+                self.fig.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
+                self.fig.canvas.mpl_connect('button_press_event', self._on_mouse_click)
+                
+                plt.tight_layout()
+                plt.show()
             
             print("✓ インタラクティブ画像表示完了")
             
@@ -273,6 +340,74 @@ class DINOv3FeatureDemo:
             print(f"❌ インタラクティブ画像表示エラー: {e}")
             import traceback
             print(f"詳細: {traceback.format_exc()}")
+    
+    def _setup_coordinate_input(self):
+        """Google Colab用の座標入力ウィジェット"""
+        print("\n📍 座標を入力して特徴量を確認:")
+        
+        self.x_input = widgets.IntSlider(
+            value=112, min=0, max=self.image_size[0]-1,
+            description='X座標:', style={'description_width': 'initial'}
+        )
+        self.y_input = widgets.IntSlider(
+            value=112, min=0, max=self.image_size[1]-1,
+            description='Y座標:', style={'description_width': 'initial'}
+        )
+        
+        self.coord_button = widgets.Button(
+            description='この座標の特徴量を表示',
+            button_style='info'
+        )
+        self.coord_button.on_click(self._on_coordinate_click)
+        
+        self.fix_button = widgets.Button(
+            description='この座標を基準点に設定',
+            button_style='success'
+        )
+        self.fix_button.on_click(self._on_coordinate_fix)
+        
+        display(widgets.VBox([
+            self.x_input,
+            self.y_input,
+            widgets.HBox([self.coord_button, self.fix_button])
+        ]))
+    
+    def _on_coordinate_click(self, button):
+        """座標入力での特徴量表示"""
+        try:
+            x, y = self.x_input.value, self.y_input.value
+            feature_vector = self._get_feature_at_pixel(x, y)
+            
+            if feature_vector is not None:
+                norm = torch.norm(feature_vector).item()
+                mean_val = torch.mean(feature_vector).item()
+                std_val = torch.std(feature_vector).item()
+                
+                print(f"\n📊 座標 ({x}, {y}) の特徴量情報:")
+                print(f"  ノルム: {norm:.4f}")
+                print(f"  平均: {mean_val:.4f}")
+                print(f"  標準偏差: {std_val:.4f}")
+            else:
+                print(f"❌ 座標 ({x}, {y}) の特徴量取得に失敗")
+                
+        except Exception as e:
+            print(f"❌ 特徴量表示エラー: {e}")
+    
+    def _on_coordinate_fix(self, button):
+        """座標入力での基準点設定"""
+        try:
+            x, y = self.x_input.value, self.y_input.value
+            self.fixed_pixel = (x, y)
+            self.fixed_feature = self._get_feature_at_pixel(x, y)
+            
+            if self.fixed_feature is not None:
+                print(f"✓ 基準点を座標 ({x}, {y}) に設定しました")
+                print("セグメンテーションボタンが有効になりました")
+            else:
+                print(f"❌ 座標 ({x}, {y}) での基準点設定に失敗")
+                
+        except Exception as e:
+            print(f"❌ 基準点設定エラー: {e}")
     
     def _pixel_to_patch(self, x: int, y: int) -> Tuple[int, int]:
         """ピクセル座標をパッチ座標に変換"""
