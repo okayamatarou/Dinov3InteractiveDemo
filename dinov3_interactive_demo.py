@@ -43,6 +43,7 @@ class DINOv3FeatureDemo:
         self.current_image = None
         self.current_features = None
         self.selected_pixel = None
+        self.fixed_pixel = None
         self.image_size = (224, 224)  # DINOv3の入力サイズ
         self.patch_size = 14  # DINOv3のパッチサイズ
         self.feature_dim = 384  # DINOv3-Sの特徴量次元
@@ -684,9 +685,17 @@ class DINOv3FeatureDemo:
     
     def _on_segment_click(self, button):
         """セグメンテーションボタンクリック時の処理"""
-        if self.selected_pixel is None or self.current_features is None:
+        reference_pixel = None
+        if hasattr(self, 'selected_pixel') and self.selected_pixel is not None:
+            reference_pixel = self.selected_pixel
+        elif hasattr(self, 'fixed_pixel') and self.fixed_pixel is not None:
+            reference_pixel = self.fixed_pixel
+        
+        if reference_pixel is None or self.current_features is None:
             with self.output_widget:
                 print("まず画像上をクリックして基準点を選択してください")
+                print("方法1: 画像上をクリック")
+                print("方法2: 座標スライダーで座標を設定し「この座標を基準点に設定」ボタンを押す")
             return
         
         button.disabled = True
@@ -695,7 +704,7 @@ class DINOv3FeatureDemo:
             with self.output_widget:
                 print("🚀 セグメンテーション処理を開始します...")
                 print("⏳ 処理には時間がかかりますが、リアルタイムで進捗を表示します")
-                x, y = self.selected_pixel
+                x, y = reference_pixel
                 print(f"📍 基準点: ({x}, {y})")
                 
                 print("🔍 基準点の特徴量を取得中...")
@@ -730,8 +739,15 @@ class DINOv3FeatureDemo:
             
             resized_image = self.current_image.resize(self.image_size, Image.LANCZOS)
             ax1.imshow(resized_image)
-            x, y = self.selected_pixel
-            ax1.plot(x, y, 'ro', markersize=10, markeredgecolor='white', markeredgewidth=2)
+            reference_pixel = None
+            if hasattr(self, 'selected_pixel') and self.selected_pixel is not None:
+                reference_pixel = self.selected_pixel
+            elif hasattr(self, 'fixed_pixel') and self.fixed_pixel is not None:
+                reference_pixel = self.fixed_pixel
+            
+            if reference_pixel:
+                x, y = reference_pixel
+                ax1.plot(x, y, 'ro', markersize=10, markeredgecolor='white', markeredgewidth=2)
             ax1.set_title('元画像（赤点：基準点）')
             ax1.axis('off')
             
@@ -760,6 +776,7 @@ class DINOv3FeatureDemo:
     def _on_reset_click(self, button):
         """リセットボタンクリック時の処理"""
         self.selected_pixel = None
+        self.fixed_pixel = None
         if self.current_image is not None:
             self._display_interactive_image()
     
