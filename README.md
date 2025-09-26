@@ -28,7 +28,7 @@ Google Colab上で動作するDINOv3の特徴量可視化デモです。画像�
 
 ```python
 # GitHubからコードをダウンロード
-!wget https://raw.githubusercontent.com/[YOUR_USERNAME]/dinov3-demo/main/dinov3_interactive_demo.py
+!wget https://raw.githubusercontent.com/okayamatarou/Dinov3InteractiveDemo/devin/1727328143-initial-dinov3-demo/dinov3_interactive_demo.py
 
 # デモを実行
 exec(open('dinov3_interactive_demo.py').read())
