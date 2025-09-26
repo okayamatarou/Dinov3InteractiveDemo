@@ -144,6 +144,24 @@ class DINOv3FeatureDemo:
         )
         self.upload_widget.observe(self._on_upload, names='value')
         
+        self.threshold_slider = widgets.FloatSlider(
+            value=0.5,
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            description='類似度閾値:',
+            style={'description_width': 'initial'},
+            disabled=True  # セグメンテーション後に有効化
+        )
+        self.threshold_slider.observe(self._on_threshold_change, names='value')
+        
+        self.threshold_reset_button = widgets.Button(
+            description='閾値リセット',
+            button_style='secondary',
+            disabled=True
+        )
+        self.threshold_reset_button.on_click(self._on_threshold_reset)
+        
         self.output_widget = widgets.Output()
         
         self.segment_button = widgets.Button(
@@ -165,6 +183,8 @@ class DINOv3FeatureDemo:
         self.y_input = None
         self.coord_button = None
         self.fix_button = None
+        
+        self.current_similarity_map = None
         
         print("UI setup complete!")
     
@@ -813,13 +833,19 @@ class DINOv3FeatureDemo:
             
             similarity_map = self._compute_similarity_map(reference_feature, self.output_widget)
             
+            self.current_similarity_map = similarity_map
+            
             with self.output_widget:
                 print("🎨 セグメンテーション結果を表示します...")
                 
             self._display_segmentation_result(similarity_map)
             
+            self.threshold_slider.disabled = False
+            self.threshold_reset_button.disabled = False
+            
             with self.output_widget:
                 print("🎉 セグメンテーション処理が完了しました!")
+                print("💡 上の閾値スライダーで表示を調整できます")
             
             button.disabled = False
             
@@ -830,12 +856,15 @@ class DINOv3FeatureDemo:
                 print(f"詳細: {traceback.format_exc()}")
             button.disabled = False
     
-    def _display_segmentation_result(self, similarity_map: np.ndarray):
+    def _display_segmentation_result(self, similarity_map: np.ndarray, threshold: float = None):
         """セグメンテーション結果の表示"""
         try:
-            print("🖼️ セグメンテーション結果を表示中...")
+            if threshold is None:
+                threshold = self.threshold_slider.value if hasattr(self, 'threshold_slider') else 0.5
             
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+            print(f"🖼️ セグメンテーション結果を表示中... (閾値: {threshold:.2f})")
+            
+            fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
             
             resized_image = self.current_image.resize(self.image_size, Image.LANCZOS)
             ax1.imshow(resized_image)
@@ -864,11 +893,23 @@ class DINOv3FeatureDemo:
             
             im2 = ax2.imshow(similarity_upsampled, cmap='hot', alpha=0.7)
             ax2.imshow(resized_image, alpha=0.3)
-            ax2.set_title('セグメンテーション結果\n(暖色：基準点と類似)', fontsize=14, pad=10)
+            ax2.set_title('類似度ヒートマップ\n(暖色：高類似度)', fontsize=14, pad=10)
             ax2.axis('off')
             
             cbar = plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
             cbar.set_label('類似度', rotation=270, labelpad=15)
+            
+            binary_mask = similarity_upsampled > threshold
+            ax3.imshow(resized_image)
+            ax3.imshow(binary_mask, cmap='Reds', alpha=0.6)
+            ax3.set_title(f'閾値適用結果\n(閾値: {threshold:.2f})', fontsize=14, pad=10)
+            ax3.axis('off')
+            
+            if reference_pixel:
+                x, y = reference_pixel
+                ax3.plot(x, y, 'r+', markersize=20, markeredgewidth=4)
+                ax3.plot(x, y, 'wo', markersize=8, markeredgewidth=2)
+                ax3.plot(x, y, 'r+', markersize=15, markeredgewidth=2)
             
             plt.tight_layout()
             
@@ -884,13 +925,15 @@ class DINOv3FeatureDemo:
             else:
                 plt.show()
             
+            above_threshold_pixels = (similarity_map > threshold).sum()
+            total_pixels = similarity_map.size
+            
             print(f"\n📊 セグメンテーション統計:")
             print(f"  最高類似度: {similarity_map.max():.3f}")
             print(f"  最低類似度: {similarity_map.min():.3f}")
             print(f"  平均類似度: {similarity_map.mean():.3f}")
-            high_similarity_pixels = (similarity_map > 0.8).sum()
-            total_pixels = similarity_map.size
-            print(f"  高類似度ピクセル (>0.8): {high_similarity_pixels}/{total_pixels} ({100*high_similarity_pixels/total_pixels:.1f}%)")
+            print(f"  現在の閾値: {threshold:.3f}")
+            print(f"  閾値以上のピクセル: {above_threshold_pixels}/{total_pixels} ({100*above_threshold_pixels/total_pixels:.1f}%)")
             
         except Exception as e:
             print(f"❌ 表示エラー: {e}")
@@ -914,10 +957,30 @@ class DINOv3FeatureDemo:
             with self.output_widget:
                 print(f"❌ モデル読み込みエラー: {e}")
     
+    def _on_threshold_change(self, change):
+        """閾値スライダー変更時の処理"""
+        if self.current_similarity_map is not None:
+            threshold = change['new']
+            with self.output_widget:
+                print(f"🎚️ 閾値を {threshold:.2f} に調整中...")
+            self._display_segmentation_result(self.current_similarity_map, threshold=threshold)
+    
+    def _on_threshold_reset(self, button):
+        """閾値リセットボタンの処理"""
+        self.threshold_slider.value = 0.5
+        if self.current_similarity_map is not None:
+            with self.output_widget:
+                print("🔄 閾値を0.5にリセットしました")
+            self._display_segmentation_result(self.current_similarity_map, threshold=0.5)
+    
     def _on_reset_click(self, button):
         """リセットボタンクリック時の処理"""
         self.selected_pixel = None
         self.fixed_pixel = None
+        self.current_similarity_map = None
+        self.threshold_slider.disabled = True
+        self.threshold_reset_button.disabled = True
+        self.threshold_slider.value = 0.5
         if self.current_image is not None:
             self._display_interactive_image()
     
@@ -931,13 +994,16 @@ class DINOv3FeatureDemo:
         print("4. '画像確認OK'ボタンを押して特徴量抽出を開始します")
         print("5. 座標スライダーで基準点を選択し、特徴量を確認")
         print("6. 'セグメンテーション実行'ボタンで類似領域を可視化します")
+        print("7. セグメンテーション後、閾値スライダーで結果を調整できます")
         print()
         print("💡 ヒント: Largeモデルは最も高精度ですが処理時間が長くなります")
+        print("💡 閾値調整: 低い値=より多くの領域、高い値=より厳密な類似領域")
         print()
         
         display(widgets.HBox([self.model_selector, self.load_model_button]))
         display(self.upload_widget)
         display(widgets.HBox([self.segment_button, self.reset_button]))
+        display(widgets.HBox([self.threshold_slider, self.threshold_reset_button]))
         display(self.output_widget)
 
 def run_dinov3_demo():
