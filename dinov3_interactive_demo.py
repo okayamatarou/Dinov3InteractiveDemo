@@ -226,36 +226,20 @@ class DINOv3FeatureDemo:
     def _display_uploaded_image(self):
         """アップロードされた画像の表示確認"""
         try:
-            if IN_COLAB:
-                print("📸 アップロードされた画像:")
-                
-                img_bytes = io.BytesIO()
-                self.current_image.save(img_bytes, format='PNG')
-                img_bytes.seek(0)
-                display(IPImage(data=img_bytes.getvalue()))
-                
-                fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-                ax.imshow(self.current_image)
-                ax.set_title(f'アップロード画像確認\nサイズ: {self.current_image.size}, モード: {self.current_image.mode}')
-                ax.axis('off')
-                plt.tight_layout()
-                
-                buf = io.BytesIO()
-                plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
-                buf.seek(0)
-                plt.close(fig)  # メモリリークを防ぐ
-                
-                display(IPImage(data=buf.getvalue()))
-                
-            else:
-                fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-                ax.imshow(self.current_image)
-                ax.set_title(f'アップロード画像確認\nサイズ: {self.current_image.size}, モード: {self.current_image.mode}')
-                ax.axis('off')
-                plt.tight_layout()
-                plt.show()
+            print("📸 アップロードされた画像:")
             
-            print("✓ 画像表示完了 - 上記の画像が正しく表示されていることを確認してください")
+            img_bytes = io.BytesIO()
+            self.current_image.save(img_bytes, format='PNG')
+            img_bytes.seek(0)
+            display(IPImage(data=img_bytes.getvalue()))
+            print("✓ IPython.display.Image表示成功")
+            
+            print(f"\n📋 画像情報:")
+            print(f"  サイズ: {self.current_image.size}")
+            print(f"  モード: {self.current_image.mode}")
+            print(f"  環境: {'Google Colab' if IN_COLAB else 'Jupyter'}")
+            
+            print("\n✅ 画像表示完了 - 上記の画像が正しく表示されていることを確認してください")
             
         except Exception as e:
             print(f"❌ 画像表示エラー: {e}")
@@ -298,43 +282,41 @@ class DINOv3FeatureDemo:
         try:
             print("\n🖼️ インタラクティブ画像を表示中...")
             
+            resized_image = self.current_image.resize(self.image_size, Image.LANCZOS)
+            
+            img_bytes = io.BytesIO()
+            resized_image.save(img_bytes, format='PNG')
+            img_bytes.seek(0)
+            display(IPImage(data=img_bytes.getvalue()))
+            print("✓ インタラクティブ画像表示成功")
+            
             if IN_COLAB:
-                self.fig, self.ax = plt.subplots(1, 1, figsize=(10, 10))
-                
-                resized_image = self.current_image.resize(self.image_size, Image.LANCZOS)
-                self.ax.imshow(resized_image)
-                self.ax.set_title('画像上をマウスホバーで特徴量表示、クリックで固定')
-                self.ax.axis('off')
-                
-                plt.tight_layout()
-                
-                buf = io.BytesIO()
-                plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
-                buf.seek(0)
-                
-                display(IPImage(data=buf.getvalue()))
-                plt.close(self.fig)  # メモリリークを防ぐ
-                
                 print("⚠️ Google Colabではマウスインタラクションが制限されています")
-                print("代替方法として、座標を直接入力する機能を追加します...")
+                print("座標を直接入力する機能を使用してください...")
                 
                 self._setup_coordinate_input()
                 
             else:
-                self.fig, self.ax = plt.subplots(1, 1, figsize=(10, 10))
+                print("🖱️ 通常のJupyter環境: マウスインタラクション機能を準備中...")
                 
-                resized_image = self.current_image.resize(self.image_size, Image.LANCZOS)
-                self.ax.imshow(resized_image)
-                self.ax.set_title('画像上をマウスホバーで特徴量表示、クリックで固定')
-                self.ax.axis('off')
+                try:
+                    self.fig, self.ax = plt.subplots(1, 1, figsize=(10, 10))
+                    self.ax.imshow(resized_image)
+                    self.ax.set_title('画像上をマウスホバーで特徴量表示、クリックで固定')
+                    self.ax.axis('off')
+                    
+                    self.fig.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
+                    self.fig.canvas.mpl_connect('button_press_event', self._on_mouse_click)
+                    
+                    plt.tight_layout()
+                    plt.show()
+                    print("✓ matplotlib インタラクティブ表示も準備完了")
+                except Exception as e:
+                    print(f"⚠️ matplotlib インタラクティブ表示は失敗: {e}")
                 
-                self.fig.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
-                self.fig.canvas.mpl_connect('button_press_event', self._on_mouse_click)
-                
-                plt.tight_layout()
-                plt.show()
+                self._setup_coordinate_input()
             
-            print("✓ インタラクティブ画像表示完了")
+            print("✅ インタラクティブ画像表示完了")
             
         except Exception as e:
             print(f"❌ インタラクティブ画像表示エラー: {e}")
