@@ -99,6 +99,8 @@ class DINOv3FeatureDemo:
         )
         self.reset_button.on_click(self._on_reset_click)
         
+        self.confirm_button = None
+        
         print("UI setup complete!")
     
     def _preprocess_image(self, image: Image.Image) -> torch.Tensor:
@@ -171,32 +173,86 @@ class DINOv3FeatureDemo:
             return
         
         try:
+            with self.output_widget:
+                clear_output(wait=True)
+                print("📁 画像アップロードを処理中...")
+            
             uploaded_file = list(change['new'].values())[0]
+            print(f"✓ ファイル受信完了: {uploaded_file['metadata']['name']}")
+            print(f"  ファイルサイズ: {len(uploaded_file['content'])} bytes")
+            
             image = Image.open(io.BytesIO(uploaded_file['content']))
+            print(f"✓ 画像読み込み成功")
+            print(f"  画像サイズ: {image.size}")
+            print(f"  画像モード: {image.mode}")
             
             self.current_image = image
             
+            print("\n📸 アップロードされた画像を表示します...")
+            self._display_uploaded_image()
+            
+            self.confirm_button = widgets.Button(
+                description='画像確認OK - 特徴量抽出開始',
+                button_style='success',
+                layout=widgets.Layout(width='300px')
+            )
+            self.confirm_button.on_click(self._on_confirm_image)
+            
+            display(self.confirm_button)
+            
+        except Exception as e:
             with self.output_widget:
                 clear_output(wait=True)
-                print("特徴量を抽出中...")
+                print(f"❌ 画像アップロード中にエラーが発生しました: {e}")
+                print(f"エラータイプ: {type(e).__name__}")
+                import traceback
+                print(f"詳細: {traceback.format_exc()}")
+    
+    def _display_uploaded_image(self):
+        """アップロードされた画像の表示確認"""
+        try:
+            fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+            ax.imshow(self.current_image)
+            ax.set_title(f'アップロード画像確認\nサイズ: {self.current_image.size}, モード: {self.current_image.mode}')
+            ax.axis('off')
+            plt.tight_layout()
+            plt.show()
+            print("✓ 画像表示完了 - 上記の画像が正しく表示されていることを確認してください")
+        except Exception as e:
+            print(f"❌ 画像表示エラー: {e}")
+    
+    def _on_confirm_image(self, button):
+        """画像確認後の特徴量抽出開始"""
+        try:
+            with self.output_widget:
+                print("\n🔄 特徴量抽出を開始します...")
             
-            image_tensor = self._preprocess_image(image)
+            self.confirm_button.disabled = True
+            
+            image_tensor = self._preprocess_image(self.current_image)
+            print("✓ 画像前処理完了")
+            
             self.current_features = self._extract_features(image_tensor)
+            print("✓ 特徴量抽出完了")
             
             self._display_interactive_image()
             
             self.segment_button.disabled = False
             self.reset_button.disabled = False
             
+            print("✅ 全ての処理が完了しました！画像上でマウスを動かしてみてください。")
+            
         except Exception as e:
             with self.output_widget:
-                clear_output(wait=True)
-                print(f"エラーが発生しました: {e}")
+                print(f"❌ 特徴量抽出中にエラーが発生しました: {e}")
+                print(f"エラータイプ: {type(e).__name__}")
+                import traceback
+                print(f"詳細: {traceback.format_exc()}")
     
     def _display_interactive_image(self):
         """インタラクティブな画像表示"""
-        with self.output_widget:
-            clear_output(wait=True)
+        try:
+            print("\n🖼️ インタラクティブ画像を表示中...")
             
             self.fig, self.ax = plt.subplots(1, 1, figsize=(10, 10))
             
@@ -210,6 +266,13 @@ class DINOv3FeatureDemo:
             
             plt.tight_layout()
             plt.show()
+            
+            print("✓ インタラクティブ画像表示完了")
+            
+        except Exception as e:
+            print(f"❌ インタラクティブ画像表示エラー: {e}")
+            import traceback
+            print(f"詳細: {traceback.format_exc()}")
     
     def _pixel_to_patch(self, x: int, y: int) -> Tuple[int, int]:
         """ピクセル座標をパッチ座標に変換"""
@@ -352,10 +415,13 @@ class DINOv3FeatureDemo:
     def run(self):
         """デモの実行"""
         print("=== DINOv3 Interactive Feature Demo ===")
+        print("📋 使用手順:")
         print("1. 下のボタンから画像をアップロードしてください")
-        print("2. 画像上をマウスホバーすると特徴量情報が表示されます")
-        print("3. クリックすると基準点が固定されます")
-        print("4. 'セグメンテーション実行'ボタンで類似領域を可視化します")
+        print("2. アップロード後、画像が正しく表示されることを確認してください")
+        print("3. '画像確認OK'ボタンを押して特徴量抽出を開始します")
+        print("4. 画像上をマウスホバーすると特徴量情報が表示されます")
+        print("5. クリックすると基準点が固定されます")
+        print("6. 'セグメンテーション実行'ボタンで類似領域を可視化します")
         print()
         
         display(self.upload_widget)
