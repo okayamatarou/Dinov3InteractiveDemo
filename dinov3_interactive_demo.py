@@ -46,53 +46,101 @@ class DINOv3FeatureDemo:
         self.fixed_pixel = None
         self.image_size = (224, 224)  # DINOv3の入力サイズ
         self.patch_size = 14  # DINOv3のパッチサイズ
-        self.feature_dim = 384  # DINOv3-Sの特徴量次元
+        self.feature_dim = 1024  # デフォルトはDINOv3-Large
+        self.current_model_size = 'large'  # デフォルトはLarge
         
         self.upload_widget = None
         self.output_widget = None
         self.fig = None
         self.ax = None
         
-        self._load_model()
         self._setup_ui()
     
-    def _load_model(self):
+    def _load_model(self, model_size='large'):
         """DINOv3モデルの読み込み"""
         try:
-            print("Loading DINOv3 model...")
-            self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')
-            self.model.eval()
-            self.model.to(self.device)
-            self.model_type = 'dinov2'
-            print("DINOv3 model loaded successfully!")
-        except Exception as e:
-            print(f"Error loading DINOv3 model: {e}")
-            print("Trying alternative loading method...")
+            model_configs = {
+                'small': {
+                    'hub_name': 'dinov2_vits14',
+                    'timm_name': 'vit_small_patch14_dinov2.lvd142m',
+                    'feature_dim': 384,
+                    'description': 'Small (384次元)'
+                },
+                'base': {
+                    'hub_name': 'dinov2_vitb14',
+                    'timm_name': 'vit_base_patch14_dinov2.lvd142m',
+                    'feature_dim': 768,
+                    'description': 'Base (768次元)'
+                },
+                'large': {
+                    'hub_name': 'dinov2_vitl14',
+                    'timm_name': 'vit_large_patch14_dinov2.lvd142m',
+                    'feature_dim': 1024,
+                    'description': 'Large (1024次元)'
+                }
+            }
+            
+            if model_size not in model_configs:
+                model_size = 'large'  # デフォルトにフォールバック
+            
+            config = model_configs[model_size]
+            self.current_model_size = model_size
+            self.feature_dim = config['feature_dim']
+            
+            print(f"📥 DINOv3-{config['description']}モデルを読み込み中...")
+            
             try:
-                import timm
-                self.model = timm.create_model('vit_small_patch14_dinov2.lvd142m', pretrained=True)
+                self.model = torch.hub.load('facebookresearch/dinov2', config['hub_name'])
                 self.model.eval()
                 self.model.to(self.device)
-                self.model_type = 'timm'
-                print("DINOv3 model loaded via timm!")
-            except Exception as e2:
-                print(f"Failed to load model: {e2}")
+                self.model_type = 'dinov2'
+                print(f"✅ DINOv3-{config['description']} モデル読み込み成功!")
+            except Exception as e:
+                print(f"⚠️ 公式モデル読み込み失敗: {e}")
+                print("代替モデルを試行中...")
                 try:
-                    self.model = timm.create_model('vit_small_patch14_224.dino', pretrained=True)
+                    self.model = timm.create_model(config['timm_name'], pretrained=True)
                     self.model.eval()
                     self.model.to(self.device)
-                    self.model_type = 'timm_dino'
-                    print("DINO model loaded via timm as fallback!")
-                except Exception as e3:
-                    print(f"All loading methods failed: {e3}")
-                    raise e3
+                    self.model_type = 'timm'
+                    print(f"✅ 代替DINOv3-{config['description']} モデル読み込み成功!")
+                except Exception as e2:
+                    print(f"❌ 代替モデルも失敗: {e2}")
+                    if model_size != 'small':
+                        print("Smallモデルにフォールバック中...")
+                        return self._load_model('small')
+                    else:
+                        raise Exception("すべてのモデル読み込みに失敗しました")
+                        
+        except Exception as e:
+            print(f"❌ モデル読み込みエラー: {e}")
+            raise
     
     def _setup_ui(self):
         """UIの設定"""
+        self.model_selector = widgets.Dropdown(
+            options=[
+                ('DINOv3-Large (1024次元) - 推奨', 'large'),
+                ('DINOv3-Base (768次元)', 'base'),
+                ('DINOv3-Small (384次元)', 'small')
+            ],
+            value='large',
+            description='モデル:',
+            style={'description_width': 'initial'}
+        )
+        self.model_selector.observe(self._on_model_change, names='value')
+        
+        self.load_model_button = widgets.Button(
+            description='モデル読み込み',
+            button_style='primary'
+        )
+        self.load_model_button.on_click(self._on_load_model_click)
+        
         self.upload_widget = widgets.FileUpload(
             accept='image/*',
             multiple=False,
-            description='画像をアップロード'
+            description='画像をアップロード',
+            disabled=True  # モデル読み込み後に有効化
         )
         self.upload_widget.observe(self._on_upload, names='value')
         
@@ -849,6 +897,23 @@ class DINOv3FeatureDemo:
             import traceback
             print(f"詳細: {traceback.format_exc()}")
     
+    def _on_model_change(self, change):
+        """モデル選択変更時の処理"""
+        if self.model is not None:
+            print(f"⚠️ モデルを変更するには「モデル読み込み」ボタンを押してください")
+    
+    def _on_load_model_click(self, button):
+        """モデル読み込みボタンのクリック処理"""
+        try:
+            with self.output_widget:
+                clear_output(wait=True)
+                self._load_model(self.model_selector.value)
+                self.upload_widget.disabled = False
+                print("🎉 モデル読み込み完了！画像をアップロードできます。")
+        except Exception as e:
+            with self.output_widget:
+                print(f"❌ モデル読み込みエラー: {e}")
+    
     def _on_reset_click(self, button):
         """リセットボタンクリック時の処理"""
         self.selected_pixel = None
@@ -860,14 +925,17 @@ class DINOv3FeatureDemo:
         """デモの実行"""
         print("=== DINOv3 Interactive Feature Demo ===")
         print("📋 使用手順:")
-        print("1. 下のボタンから画像をアップロードしてください")
-        print("2. アップロード後、画像が正しく表示されることを確認してください")
-        print("3. '画像確認OK'ボタンを押して特徴量抽出を開始します")
-        print("4. 画像上をマウスホバーすると特徴量情報が表示されます")
-        print("5. クリックすると基準点が固定されます")
+        print("1. モデルサイズを選択して「モデル読み込み」をクリック")
+        print("2. 下のボタンから画像をアップロードしてください")
+        print("3. アップロード後、画像が正しく表示されることを確認してください")
+        print("4. '画像確認OK'ボタンを押して特徴量抽出を開始します")
+        print("5. 座標スライダーで基準点を選択し、特徴量を確認")
         print("6. 'セグメンテーション実行'ボタンで類似領域を可視化します")
         print()
+        print("💡 ヒント: Largeモデルは最も高精度ですが処理時間が長くなります")
+        print()
         
+        display(widgets.HBox([self.model_selector, self.load_model_button]))
         display(self.upload_widget)
         display(widgets.HBox([self.segment_button, self.reset_button]))
         display(self.output_widget)
