@@ -419,12 +419,20 @@ class DINOv3FeatureDemo:
             print(f"Debug: image_size = {self.image_size}")
             print(f"Debug: input coordinates = ({x}, {y})")
             
+            if x < 0 or y < 0 or x >= self.image_size[0] or y >= self.image_size[1]:
+                print(f"Warning: Coordinates ({x}, {y}) out of image bounds {self.image_size}")
+                x = max(0, min(x, self.image_size[0] - 1))
+                y = max(0, min(y, self.image_size[1] - 1))
+                print(f"Debug: Clamped coordinates to ({x}, {y})")
+            
             if len(self.current_features.shape) == 4:  # [B, H, W, D]
                 _, h, w, _ = self.current_features.shape
+                print(f"Debug: 4D tensor - patch grid size: {h}x{w}")
             elif len(self.current_features.shape) == 3:  # [B, N, D] - 予期しない形状
                 print(f"Warning: Unexpected 3D tensor shape: {self.current_features.shape}")
                 n_patches = self.current_features.shape[1]
                 h = w = int(np.sqrt(n_patches))
+                print(f"Debug: 3D tensor - calculated patch grid: {h}x{w} from {n_patches} patches")
             else:
                 raise ValueError(f"Unsupported feature tensor shape: {self.current_features.shape}")
             
@@ -434,12 +442,21 @@ class DINOv3FeatureDemo:
             patch_x = max(0, min(patch_x, w - 1))
             patch_y = max(0, min(patch_y, h - 1))
             
-            print(f"Debug: patch coordinates = ({patch_x}, {patch_y})")
+            print(f"Debug: patch coordinates = ({patch_x}, {patch_y}) in grid {h}x{w}")
+            
+            if patch_x >= w or patch_y >= h:
+                print(f"Error: Calculated patch coordinates ({patch_x}, {patch_y}) exceed grid bounds ({h}, {w})")
+                patch_x = min(patch_x, w - 1)
+                patch_y = min(patch_y, h - 1)
+                print(f"Debug: Final clamped patch coordinates = ({patch_x}, {patch_y})")
+            
             return patch_x, patch_y
             
         except Exception as e:
             print(f"Error in _pixel_to_patch: {e}")
             print(f"Features shape: {self.current_features.shape if self.current_features is not None else 'None'}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
             raise e
     
     def _get_feature_at_pixel(self, x: int, y: int) -> torch.Tensor:
@@ -448,26 +465,55 @@ class DINOv3FeatureDemo:
             if self.current_features is None:
                 raise ValueError("Features not extracted yet")
                 
+            print(f"Debug: Getting feature at pixel ({x}, {y})")
+            print(f"Debug: Current features shape: {self.current_features.shape}")
+            
             patch_x, patch_y = self._pixel_to_patch(x, y)
             
             if len(self.current_features.shape) == 4:  # [B, H, W, D]
+                _, h, w, d = self.current_features.shape
+                print(f"Debug: 4D indexing - accessing [0, {patch_y}, {patch_x}, :] from shape [1, {h}, {w}, {d}]")
+                
+                if patch_y >= h or patch_x >= w:
+                    raise IndexError(f"Patch coordinates ({patch_x}, {patch_y}) exceed tensor bounds ({w}, {h})")
+                
                 feature = self.current_features[0, patch_y, patch_x, :]
+                
             elif len(self.current_features.shape) == 3:  # [B, N, D]
-                n_patches_side = int(np.sqrt(self.current_features.shape[1]))
+                _, n_patches, d = self.current_features.shape
+                n_patches_side = int(np.sqrt(n_patches))
                 patch_idx = patch_y * n_patches_side + patch_x
-                if patch_idx >= self.current_features.shape[1]:
-                    patch_idx = self.current_features.shape[1] - 1
+                
+                print(f"Debug: 3D indexing - patch_idx={patch_idx} from ({patch_x}, {patch_y}) in {n_patches_side}x{n_patches_side} grid")
+                print(f"Debug: Accessing [0, {patch_idx}, :] from shape [1, {n_patches}, {d}]")
+                
+                if patch_idx >= n_patches:
+                    print(f"Warning: patch_idx {patch_idx} >= n_patches {n_patches}, clamping to {n_patches-1}")
+                    patch_idx = n_patches - 1
+                
+                if patch_idx < 0:
+                    print(f"Warning: patch_idx {patch_idx} < 0, clamping to 0")
+                    patch_idx = 0
+                
                 feature = self.current_features[0, patch_idx, :]
+                
             else:
                 raise ValueError(f"Unsupported feature tensor shape: {self.current_features.shape}")
             
             print(f"Debug: extracted feature shape = {feature.shape}")
+            
+            if feature.numel() == 0:
+                raise ValueError("Extracted feature is empty")
+            
             return feature
             
         except Exception as e:
             print(f"Error in _get_feature_at_pixel: {e}")
             print(f"Input coordinates: ({x}, {y})")
             print(f"Features shape: {self.current_features.shape if self.current_features is not None else 'None'}")
+            if hasattr(self, 'current_features') and self.current_features is not None:
+                print(f"Features dtype: {self.current_features.dtype}")
+                print(f"Features device: {self.current_features.device}")
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
             raise e
