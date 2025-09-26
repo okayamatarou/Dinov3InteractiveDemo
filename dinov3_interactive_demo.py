@@ -16,6 +16,7 @@ from PIL import Image
 import ipywidgets as widgets
 from IPython.display import display, clear_output, Image as IPImage
 import io
+import sys
 import base64
 from typing import Optional, Tuple, List
 import timm
@@ -622,21 +623,32 @@ class DINOv3FeatureDemo:
         
         self.fig.canvas.draw()
     
-    def _compute_similarity_map(self, reference_feature: torch.Tensor) -> np.ndarray:
+    def _compute_similarity_map(self, reference_feature: torch.Tensor, output_widget=None) -> np.ndarray:
         """参照特徴量との類似度マップを計算（進捗表示付き）"""
         all_features = self.current_features[0]  # [H, W, D]
         h, w, d = all_features.shape
         total_pixels = h * w
         
-        print(f"🔄 類似度計算開始: {total_pixels}ピクセル ({h}x{w}) を処理中...")
+        def print_progress(message):
+            if output_widget:
+                with output_widget:
+                    print(message)
+                    sys.stdout.flush()
+            else:
+                print(message)
+        
+        print_progress(f"🔄 類似度計算開始: {total_pixels:,}ピクセル ({h}x{w}) を処理中...")
         
         all_features_flat = all_features.reshape(-1, d)  # [H*W, D]
         reference_feature_norm = F.normalize(reference_feature.unsqueeze(0), p=2, dim=1)
         
-        batch_size = min(1000, total_pixels)  # 最大1000ピクセルずつ処理
+        batch_size = min(500, total_pixels)  # より頻繁な進捗更新
         num_batches = (total_pixels + batch_size - 1) // batch_size
         
         similarity_scores = []
+        
+        import time
+        start_time = time.time()
         
         for batch_idx in range(num_batches):
             start_idx = batch_idx * batch_size
@@ -644,7 +656,13 @@ class DINOv3FeatureDemo:
             
             progress = (batch_idx + 1) / num_batches * 100
             processed_pixels = min(end_idx, total_pixels)
-            print(f"📊 進捗: {processed_pixels}/{total_pixels} ピクセル ({progress:.1f}%) 完了")
+            elapsed = time.time() - start_time
+            rate = processed_pixels / elapsed if elapsed > 0 else 0
+            eta = (total_pixels - processed_pixels) / rate if rate > 0 else 0
+            
+            print_progress(f"📊 進捗: {processed_pixels:,}/{total_pixels:,} ピクセル ({progress:.1f}%) 完了")
+            if batch_idx > 0:
+                print_progress(f"⏱️ 処理速度: {rate:.0f} pixel/秒, 残り時間: {eta:.1f}秒")
             
             batch_features = all_features_flat[start_idx:end_idx]
             batch_features_norm = F.normalize(batch_features, p=2, dim=1)
@@ -655,10 +673,12 @@ class DINOv3FeatureDemo:
         similarity = torch.cat(similarity_scores, dim=0)
         similarity_map = similarity.reshape(h, w).cpu().numpy()
         
-        print(f"✅ 類似度計算完了! 統計情報:")
-        print(f"   最大類似度: {similarity_map.max():.3f}")
-        print(f"   最小類似度: {similarity_map.min():.3f}")
-        print(f"   平均類似度: {similarity_map.mean():.3f}")
+        total_time = time.time() - start_time
+        print_progress(f"✅ 類似度計算完了! 統計情報:")
+        print_progress(f"   最大類似度: {similarity_map.max():.3f}")
+        print_progress(f"   最小類似度: {similarity_map.min():.3f}")
+        print_progress(f"   平均類似度: {similarity_map.mean():.3f}")
+        print_progress(f"   総処理時間: {total_time:.1f}秒")
         
         return similarity_map
     
@@ -669,9 +689,12 @@ class DINOv3FeatureDemo:
                 print("まず画像上をクリックして基準点を選択してください")
             return
         
+        button.disabled = True
+        
         try:
             with self.output_widget:
                 print("🚀 セグメンテーション処理を開始します...")
+                print("⏳ 処理には時間がかかりますが、リアルタイムで進捗を表示します")
                 x, y = self.selected_pixel
                 print(f"📍 基準点: ({x}, {y})")
                 
@@ -680,17 +703,23 @@ class DINOv3FeatureDemo:
                 print(f"✅ 基準点特徴量取得完了 (次元: {reference_feature.shape[0]})")
                 
                 print("🧮 全ピクセルとの類似度を計算中...")
-                similarity_map = self._compute_similarity_map(reference_feature)
-                
+                sys.stdout.flush()
+            
+            similarity_map = self._compute_similarity_map(reference_feature, self.output_widget)
+            
+            with self.output_widget:
                 print("🎨 セグメンテーション結果を表示中...")
                 self._display_segmentation_result(similarity_map)
                 print("🎉 セグメンテーション処理が完了しました!")
+            
+            button.disabled = False
             
         except Exception as e:
             with self.output_widget:
                 print(f"❌ セグメンテーション中にエラーが発生しました: {e}")
                 import traceback
                 print(f"詳細: {traceback.format_exc()}")
+            button.disabled = False
     
     def _display_segmentation_result(self, similarity_map: np.ndarray):
         """セグメンテーション結果の表示"""
