@@ -139,7 +139,9 @@ class DINOv3FeatureDemo:
         """DINOv3特徴量の抽出"""
         with torch.no_grad():
             try:
+                print(f"🔄 特徴量抽出開始...")
                 print(f"Debug: Input tensor shape: {image_tensor.shape}")
+                print("🧠 DINOv3モデルで特徴量を計算中...")
                 features = self.model.forward_features(image_tensor)
                 
                 print(f"Debug: Raw features type: {type(features)}")
@@ -312,14 +314,18 @@ class DINOv3FeatureDemo:
         try:
             with self.output_widget:
                 print("\n🔄 特徴量抽出を開始します...")
+                print("⏳ この処理には数秒かかる場合があります...")
             
             self.confirm_button.disabled = True
             
+            print("🖼️  画像の前処理中...")
             image_tensor = self._preprocess_image(self.current_image)
             print("✓ 画像前処理完了")
             
+            print("🧠 DINOv3モデルで特徴量抽出中...")
             self.current_features = self._extract_features(image_tensor)
             print("✓ 特徴量抽出完了")
+            print(f"📊 特徴量テンソル形状: {self.current_features.shape}")
             
             self._display_interactive_image()
             
@@ -327,6 +333,7 @@ class DINOv3FeatureDemo:
             self.reset_button.disabled = False
             
             print("✅ 全ての処理が完了しました！画像上でマウスを動かしてみてください。")
+            print("🎯 座標入力またはセグメンテーション機能を使用できます")
             
         except Exception as e:
             with self.output_widget:
@@ -616,16 +623,42 @@ class DINOv3FeatureDemo:
         self.fig.canvas.draw()
     
     def _compute_similarity_map(self, reference_feature: torch.Tensor) -> np.ndarray:
-        """参照特徴量との類似度マップを計算"""
+        """参照特徴量との類似度マップを計算（進捗表示付き）"""
         all_features = self.current_features[0]  # [H, W, D]
         h, w, d = all_features.shape
+        total_pixels = h * w
+        
+        print(f"🔄 類似度計算開始: {total_pixels}ピクセル ({h}x{w}) を処理中...")
         
         all_features_flat = all_features.reshape(-1, d)  # [H*W, D]
-        all_features_norm = F.normalize(all_features_flat, p=2, dim=1)
         reference_feature_norm = F.normalize(reference_feature.unsqueeze(0), p=2, dim=1)
         
-        similarity = torch.mm(all_features_norm, reference_feature_norm.T).squeeze()
+        batch_size = min(1000, total_pixels)  # 最大1000ピクセルずつ処理
+        num_batches = (total_pixels + batch_size - 1) // batch_size
+        
+        similarity_scores = []
+        
+        for batch_idx in range(num_batches):
+            start_idx = batch_idx * batch_size
+            end_idx = min(start_idx + batch_size, total_pixels)
+            
+            progress = (batch_idx + 1) / num_batches * 100
+            processed_pixels = min(end_idx, total_pixels)
+            print(f"📊 進捗: {processed_pixels}/{total_pixels} ピクセル ({progress:.1f}%) 完了")
+            
+            batch_features = all_features_flat[start_idx:end_idx]
+            batch_features_norm = F.normalize(batch_features, p=2, dim=1)
+            batch_similarity = torch.mm(batch_features_norm, reference_feature_norm.T).squeeze()
+            
+            similarity_scores.append(batch_similarity)
+        
+        similarity = torch.cat(similarity_scores, dim=0)
         similarity_map = similarity.reshape(h, w).cpu().numpy()
+        
+        print(f"✅ 類似度計算完了! 統計情報:")
+        print(f"   最大類似度: {similarity_map.max():.3f}")
+        print(f"   最小類似度: {similarity_map.min():.3f}")
+        print(f"   平均類似度: {similarity_map.mean():.3f}")
         
         return similarity_map
     
@@ -637,16 +670,27 @@ class DINOv3FeatureDemo:
             return
         
         try:
-            x, y = self.selected_pixel
-            reference_feature = self._get_feature_at_pixel(x, y)
-            
-            similarity_map = self._compute_similarity_map(reference_feature)
-            
-            self._display_segmentation_result(similarity_map)
+            with self.output_widget:
+                print("🚀 セグメンテーション処理を開始します...")
+                x, y = self.selected_pixel
+                print(f"📍 基準点: ({x}, {y})")
+                
+                print("🔍 基準点の特徴量を取得中...")
+                reference_feature = self._get_feature_at_pixel(x, y)
+                print(f"✅ 基準点特徴量取得完了 (次元: {reference_feature.shape[0]})")
+                
+                print("🧮 全ピクセルとの類似度を計算中...")
+                similarity_map = self._compute_similarity_map(reference_feature)
+                
+                print("🎨 セグメンテーション結果を表示中...")
+                self._display_segmentation_result(similarity_map)
+                print("🎉 セグメンテーション処理が完了しました!")
             
         except Exception as e:
             with self.output_widget:
-                print(f"セグメンテーション中にエラーが発生しました: {e}")
+                print(f"❌ セグメンテーション中にエラーが発生しました: {e}")
+                import traceback
+                print(f"詳細: {traceback.format_exc()}")
     
     def _display_segmentation_result(self, similarity_map: np.ndarray):
         """セグメンテーション結果の表示"""
