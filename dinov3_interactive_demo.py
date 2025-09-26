@@ -27,6 +27,7 @@ class DINOv3FeatureDemo:
         print(f"Using device: {self.device}")
         
         self.model = None
+        self.model_type = None
         self.current_image = None
         self.current_features = None
         self.selected_pixel = None
@@ -49,6 +50,7 @@ class DINOv3FeatureDemo:
             self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')
             self.model.eval()
             self.model.to(self.device)
+            self.model_type = 'dinov2'
             print("DINOv3 model loaded successfully!")
         except Exception as e:
             print(f"Error loading DINOv3 model: {e}")
@@ -58,10 +60,19 @@ class DINOv3FeatureDemo:
                 self.model = timm.create_model('vit_small_patch14_dinov2.lvd142m', pretrained=True)
                 self.model.eval()
                 self.model.to(self.device)
+                self.model_type = 'timm'
                 print("DINOv3 model loaded via timm!")
             except Exception as e2:
                 print(f"Failed to load model: {e2}")
-                raise e2
+                try:
+                    self.model = timm.create_model('vit_small_patch14_224.dino', pretrained=True)
+                    self.model.eval()
+                    self.model.to(self.device)
+                    self.model_type = 'timm_dino'
+                    print("DINO model loaded via timm as fallback!")
+                except Exception as e3:
+                    print(f"All loading methods failed: {e3}")
+                    raise e3
     
     def _setup_ui(self):
         """UIの設定"""
@@ -110,14 +121,49 @@ class DINOv3FeatureDemo:
     def _extract_features(self, image_tensor: torch.Tensor) -> torch.Tensor:
         """DINOv3特徴量の抽出"""
         with torch.no_grad():
-            features = self.model.forward_features(image_tensor)
-            
-            patch_features = features[:, 1:]  # [B, N_patches, D]
-            
-            n_patches_side = int(np.sqrt(patch_features.shape[1]))
-            patch_features = patch_features.reshape(1, n_patches_side, n_patches_side, -1)
-            
-            return patch_features
+            try:
+                features = self.model.forward_features(image_tensor)
+                
+                print(f"Features shape: {features.shape}")
+                
+                if len(features.shape) == 3 and features.shape[1] > 1:
+                    patch_features = features[:, 1:]
+                else:
+                    patch_features = features
+                
+                print(f"Patch features shape: {patch_features.shape}")
+                
+                n_patches = patch_features.shape[1]
+                n_patches_side = int(np.sqrt(n_patches))
+                
+                if n_patches_side * n_patches_side != n_patches:
+                    print(f"Warning: Non-square patch grid detected. n_patches={n_patches}")
+                    n_patches_side = int(np.sqrt(n_patches))
+                    patch_features = patch_features[:, :n_patches_side*n_patches_side, :]
+                
+                patch_features = patch_features.reshape(1, n_patches_side, n_patches_side, -1)
+                
+                print(f"Reshaped features: {patch_features.shape}")
+                return patch_features
+                
+            except Exception as e:
+                print(f"Error in feature extraction: {e}")
+                try:
+                    features = self.model(image_tensor)
+                    if isinstance(features, tuple):
+                        features = features[0]
+                    
+                    if len(features.shape) == 4:  # [B, C, H, W]
+                        features = features.permute(0, 2, 3, 1)  # [B, H, W, C]
+                    elif len(features.shape) == 3:  # [B, N, D]
+                        n_patches = features.shape[1]
+                        n_patches_side = int(np.sqrt(n_patches))
+                        features = features.reshape(1, n_patches_side, n_patches_side, -1)
+                    
+                    return features
+                except Exception as e2:
+                    print(f"Alternative feature extraction also failed: {e2}")
+                    raise e2
     
     def _on_upload(self, change):
         """画像アップロード時の処理"""
