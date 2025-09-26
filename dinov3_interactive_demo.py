@@ -717,8 +717,11 @@ class DINOv3FeatureDemo:
             similarity_map = self._compute_similarity_map(reference_feature, self.output_widget)
             
             with self.output_widget:
-                print("🎨 セグメンテーション結果を表示中...")
-                self._display_segmentation_result(similarity_map)
+                print("🎨 セグメンテーション結果を表示します...")
+                
+            self._display_segmentation_result(similarity_map)
+            
+            with self.output_widget:
                 print("🎉 セグメンテーション処理が完了しました!")
             
             button.disabled = False
@@ -732,13 +735,14 @@ class DINOv3FeatureDemo:
     
     def _display_segmentation_result(self, similarity_map: np.ndarray):
         """セグメンテーション結果の表示"""
-        with self.output_widget:
-            clear_output(wait=True)
+        try:
+            print("🖼️ セグメンテーション結果を表示中...")
             
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
             
             resized_image = self.current_image.resize(self.image_size, Image.LANCZOS)
             ax1.imshow(resized_image)
+            
             reference_pixel = None
             if hasattr(self, 'selected_pixel') and self.selected_pixel is not None:
                 reference_pixel = self.selected_pixel
@@ -747,8 +751,12 @@ class DINOv3FeatureDemo:
             
             if reference_pixel:
                 x, y = reference_pixel
-                ax1.plot(x, y, 'ro', markersize=10, markeredgecolor='white', markeredgewidth=2)
-            ax1.set_title('元画像（赤点：基準点）')
+                ax1.plot(x, y, 'r+', markersize=20, markeredgewidth=4, label='基準点')
+                ax1.plot(x, y, 'wo', markersize=8, markeredgewidth=2)
+                ax1.plot(x, y, 'r+', markersize=15, markeredgewidth=2)
+                print(f"📍 基準点座標: ({x}, {y})")
+            
+            ax1.set_title('元画像 (基準点: 赤い十字)', fontsize=14, pad=10)
             ax1.axis('off')
             
             similarity_upsampled = cv2.resize(
@@ -759,19 +767,38 @@ class DINOv3FeatureDemo:
             
             im2 = ax2.imshow(similarity_upsampled, cmap='hot', alpha=0.7)
             ax2.imshow(resized_image, alpha=0.3)
-            ax2.set_title('特徴量類似度マップ（暖色：高類似度）')
+            ax2.set_title('セグメンテーション結果\n(暖色：基準点と類似)', fontsize=14, pad=10)
             ax2.axis('off')
             
-            plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
+            cbar = plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
+            cbar.set_label('類似度', rotation=270, labelpad=15)
             
             plt.tight_layout()
-            plt.show()
             
-            print(f"類似度統計:")
-            print(f"  最大値: {similarity_map.max():.3f}")
-            print(f"  最小値: {similarity_map.min():.3f}")
-            print(f"  平均値: {similarity_map.mean():.3f}")
-            print(f"  標準偏差: {similarity_map.std():.3f}")
+            if IN_COLAB:
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight', dpi=150, 
+                           facecolor='white', edgecolor='none')
+                buf.seek(0)
+                plt.close(fig)
+                
+                print("✅ セグメンテーション結果:")
+                display(IPImage(data=buf.getvalue()))
+            else:
+                plt.show()
+            
+            print(f"\n📊 セグメンテーション統計:")
+            print(f"  最高類似度: {similarity_map.max():.3f}")
+            print(f"  最低類似度: {similarity_map.min():.3f}")
+            print(f"  平均類似度: {similarity_map.mean():.3f}")
+            high_similarity_pixels = (similarity_map > 0.8).sum()
+            total_pixels = similarity_map.size
+            print(f"  高類似度ピクセル (>0.8): {high_similarity_pixels}/{total_pixels} ({100*high_similarity_pixels/total_pixels:.1f}%)")
+            
+        except Exception as e:
+            print(f"❌ 表示エラー: {e}")
+            import traceback
+            print(f"詳細: {traceback.format_exc()}")
     
     def _on_reset_click(self, button):
         """リセットボタンクリック時の処理"""
